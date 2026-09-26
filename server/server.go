@@ -6,7 +6,7 @@ import (
 	"net"
 )
 
-const defaultListener = ""
+const defaultListener = ":6379"
 
 type Server struct {
 	ln         net.Listener
@@ -38,13 +38,16 @@ func (s *Server) AcceptLoop() error {
 			if errors.Is(err, net.ErrClosed) {
 				return err
 			}
-			slog.Info("accept error", "err", err)
+			slog.Info("Accept error", "err", err)
 			continue
 		}
-		go handleConnection(conn)
+		if s.isRunning {
+			go handleConnection(conn)
+		}
 	}
 }
 
 func (s *Server) Shutdown() {
+	s.isRunning = false
 	s.ln.Close()
 }
