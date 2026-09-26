@@ -1,7 +1,10 @@
 package main
 
 import (
+	"errors"
+	"log"
 	"log/slog"
+	"net"
 	"os"
 	"os/signal"
 	"redis-clone/server"
@@ -9,20 +12,24 @@ import (
 )
 
 func main() {
-	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
-	slog.SetDefault(logger)
-	ListenAndServe := server.NewServer("")
-	err := ListenAndServe.Start()
-	if err != nil {
-		slog.Info("error", "error", err)
-		os.Exit(1)
-	}
+	ListenAndServe := server.NewServer(":6379")
 
 	shutdownSig := make(chan os.Signal, 1)
 	signal.Notify(shutdownSig, syscall.SIGINT, syscall.SIGTERM)
 
-	<-shutdownSig
-	ListenAndServe.Shutdown()
-	signal.Stop(shutdownSig)
+	go func() {
+		<-shutdownSig
+		log.Println("Server Shutdown")
+		ListenAndServe.Shutdown()
+		signal.Stop(shutdownSig)
+	}()
 
+	err := ListenAndServe.Start()
+	if err != nil {
+		if errors.Is(err, net.ErrClosed) {
+			return
+		}
+		slog.Info("Listen Error", "err:", err)
+		os.Exit(1)
+	}
 }
