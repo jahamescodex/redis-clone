@@ -1,10 +1,7 @@
 package main
 
 import (
-	"errors"
 	"log"
-	"log/slog"
-	"net"
 	"os"
 	"os/signal"
 	"redis-clone/server"
@@ -12,7 +9,7 @@ import (
 )
 
 func main() {
-	ListenAndServe := server.NewServer(":6379")
+	app := server.NewServer(":6379")
 
 	shutdownSig := make(chan os.Signal, 1)
 	signal.Notify(shutdownSig, syscall.SIGINT, syscall.SIGTERM)
@@ -20,16 +17,17 @@ func main() {
 	go func() {
 		<-shutdownSig
 		log.Println("Server Shutdown")
-		ListenAndServe.Shutdown()
+		app.Shutdown()
 		signal.Stop(shutdownSig)
 	}()
 
-	err := ListenAndServe.Start()
+	err := app.Start()
 	if err != nil {
-		if errors.Is(err, net.ErrClosed) {
-			return
-		}
-		slog.Info("Listen Error", "err:", err)
-		os.Exit(1)
+		log.Fatal("Listen Error:", err)
 	}
+
+	if err := app.AcceptLoop(); err != nil {
+		log.Fatal(err)
+	}
+	app.Wg.Wait()
 }
