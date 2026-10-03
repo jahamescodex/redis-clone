@@ -1,24 +1,37 @@
 package server
 
 import (
-	"errors"
+	"context"
 	"log/slog"
 	"net"
+	"sync"
+	"sync/atomic"
 )
 
-const defaultListener = ":6379"
+const defaultListener = ":6767"
 
 type Server struct {
 	ln         net.Listener
 	listenAddr string
-	isRunning  bool
+
+	isRunning atomic.Bool
+
+	Wg     sync.WaitGroup
+	ctx    context.Context
+	cancel context.CancelFunc
+
+	conMu   sync.RWMutex
+	connMap map[net.Conn]struct{}
 }
 
 func NewServer(listenAddr string) *Server {
+	ctx, cancel := context.WithCancel(context.Background())
 	if len(listenAddr) == 0 {
-		return &Server{listenAddr: defaultListener, isRunning: true}
+		return &Server{listenAddr: defaultListener, connMap: make(map[net.Conn]struct{}),
+			Wg: sync.WaitGroup{}, ctx: ctx, cancel: cancel}
 	}
-	return &Server{listenAddr: listenAddr, isRunning: true}
+	return &Server{listenAddr: listenAddr, connMap: make(map[net.Conn]struct{}),
+		Wg: sync.WaitGroup{}, ctx: ctx, cancel: cancel}
 }
 
 func (s *Server) Start() error {
@@ -27,27 +40,37 @@ func (s *Server) Start() error {
 	if err != nil {
 		return err
 	}
-
-	return s.AcceptLoop()
+	s.isRunning.Store(true)
+	return nil
 }
 
 func (s *Server) AcceptLoop() error {
 	for {
 		conn, err := s.ln.Accept()
 		if err != nil {
-			if errors.Is(err, net.ErrClosed) {
-				return err
+			if !s.isRunning.Load() { // non-read method
+				return nil
 			}
 			slog.Info("Accept error", "err", err)
 			continue
 		}
-		if s.isRunning {
-			go handleConnection(conn)
+		s.conMu.Lock()
+		if !s.isRunning.Load() {
+			s.conMu.Unlock()
+			continue
 		}
+
+		s.connMap[conn] = struct{}{}
+		s.conMu.Unlock()
+
+		s.Wg.Add(1)
+		go s.handleConnection(conn)
+
 	}
 }
 
 func (s *Server) Shutdown() {
-	s.isRunning = false
+	s.isRunning.Store(false)
 	s.ln.Close()
+	s.cancel()
 }

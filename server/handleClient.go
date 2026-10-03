@@ -1,9 +1,6 @@
 package server
 
 import (
-	"errors"
-	"fmt"
-	"log/slog"
 	"net"
 	"sync"
 )
@@ -15,30 +12,33 @@ var bufferPool = sync.Pool{
 	},
 }
 
-func handleConnection(conn net.Conn) {
-
-	buffHeaderPtr := bufferPool.Get().(*[]byte)
-	buffer := *buffHeaderPtr
-
+func (s *Server) handleConnection(conn net.Conn) {
+	done := make(chan struct{})
 	defer func() {
-		*buffHeaderPtr = (*buffHeaderPtr)[:cap(*buffHeaderPtr)]
-		clear(*buffHeaderPtr)
-		bufferPool.Put(buffHeaderPtr)
+		close(done)
+		s.conMu.Lock()
+		delete(s.connMap, conn)
+		s.conMu.Unlock()
+		s.Wg.Done()
+		conn.Close()
 	}()
 
-	processed := 0
+	go func() {
+		select {
+		case <-s.ctx.Done():
+			conn.Close()
+		case <-done:
+			return
+		}
+	}()
 
 	for {
-		_, err := conn.Read(buffer[processed:])
+		buffer := make([]byte, 1024)
+		_, err := conn.Read(buffer)
 		if err != nil {
-			if errors.Is(err, net.ErrClosed) {
-				return
-			}
-			slog.Info("Connection Read Error", "err", err)
+			return
 		}
-		for {
-			fmt.Println(string(buffer))
-			conn.Write([]byte("+Ok\r\n"))
-		}
+		conn.Write([]byte("+OK\r\n"))
 	}
+
 }
